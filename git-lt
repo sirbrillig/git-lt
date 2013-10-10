@@ -236,7 +236,7 @@ if [ "$ACTION" == "push" ]; then
     echo "push cancelled."
     exit 0
   fi
-  svn commit -m "$LASTMESSAGE" ## FIXME: untested!!
+  svn commit -m "$LASTMESSAGE" && git commit --allow-empty -m "svn push commit made @ $(date)" ## FIXME: untested!!
   echo "push complete!"
   exit 0
 fi
