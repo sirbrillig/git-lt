@@ -1,0 +1,252 @@
+#!/bin/bash
+# git-lt
+# 
+# Licensed under MIT License: http://opensource.org/licenses/MIT
+#
+# Copyright (c) 2013 Payton Swick payton@foolord.com
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+# The branch to use as a mirror of svn
+MIRROR_BRANCH='MIRRORBRANCH'
+
+# Die on errors
+set -e
+
+
+ACTION="$1"
+shift
+ARGUMENTS="$@"
+# Die on uninitialized vars
+set -u
+
+VERSION='0.6.1'
+
+USAGE="git-lt $VERSION
+A git plugin to allow using local branches for a remote svn repo.
+
+usage:
+git lt help				How do I use this thing?
+git lt init     	Initializes a git repository with a gitignore and creates a
+                	special mirror branch
+git lt pull     	Alias for git lt fetch && git lt rebase
+git lt push     	Make an svn commit for the most recent git commit.
+git lt add        Add a file to the git and svn repos.
+git lt diff     	Alias for svn diff
+git lt commit  	 	Perform an svn commit and run git lt pull
+git lt rebase 	  Rebases current branch to mirror branch
+git lt fetch   	 	Updates mirror branch to latest svn commit
+git lt status			Alias for svn status --ignore-externals
+git lt trash			Trash local branch
+git lt reset-all	Trash local branch and run git lt pull
+"
+
+GITIGNORE='.svn
+*.swp
+.config
+*.err
+*.pid
+*.log
+'
+
+if [ -z "$ACTION" ]; then
+	echo "$USAGE"
+  exit 1
+fi
+
+if [ "$ACTION" == "help" ]; then
+	echo "$HELP"
+	exit 0
+fi
+
+pipe_if_not_empty () {
+	head=$(dd bs=1 count=1 2>/dev/null; echo a)
+	head=${head%a}
+	if [ "x$head" != x"" ]; then
+		{ printf %s "$head"; cat; } | "$@"
+	fi
+}
+
+set +e
+svn info > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  echo "I don't see a svn repository in this directory. I can't be of much help without that."
+  exit 1
+fi
+set -e
+
+# Append any external repos to the gitignore.
+EXTERNALS=$(svn st --ignore-externals|grep ^X|awk '/X/{print $2}')
+GITIGNORE="$GITIGNORE$EXTERNALS"
+
+if [ "$ACTION" == "st" ] || [ "$ACTION" == "status" ]; then
+	svn st --ignore-externals
+  exit 0
+fi
+
+if [ "$ACTION" == "diff" ]; then
+	if [ -t 1 ]; then
+		svn diff | colordiff | pipe_if_not_empty less -R
+	else
+		svn diff
+	fi
+  exit 0
+fi
+
+if [ "$ACTION" == "init" ]; then
+  FIRST_COMMIT=''
+  if [ -d '.git' ]; then
+    echo "Looks like a git repository already exists here; skipping..."
+  else
+    echo "Initializing git repository"
+    git init
+		FIRST_COMMIT=1
+  fi
+  if [ -e '.gitignore' ]; then
+    echo "Looks like a gitignore already exists here; skipping..."
+    echo "Be SURE that the gitignore contains the following:\n$GITIGNORE"
+    # TODO: allow appending to current gitignore?
+  else
+    echo "Creating gitignore"
+    echo "$GITIGNORE" > .gitignore
+		git add .gitignore
+		FIRST_COMMIT=1
+  fi
+	if [ -n "$FIRST_COMMIT" ]; then
+		echo "Making initial commit"
+		git add .
+		git commit -am 'initial commit by git-lt'
+	fi
+	echo "Checking for branch"
+	set +e
+  EXISTS=$(git show-ref refs/heads/$MIRROR_BRANCH)
+	set -e
+  if [ -n "$EXISTS" ]; then
+    echo "Looks like the $MIRROR_BRANCH branch already exists here; skipping..."
+  else
+    echo "Creating mirror branch '$MIRROR_BRANCH'"
+    git branch "$MIRROR_BRANCH"
+  fi
+  echo "All set!"
+  exit 0
+fi
+
+BRANCH=$(git branch | sed -n '/\* /s///p')
+if [ -z "$BRANCH" ]; then
+  echo "Could not find local branch name."
+  exit 1
+fi
+
+if [ "$ACTION" == "fetch" ]; then
+  echo "On branch $BRANCH"
+  # exit if there are any uncommitted changes here
+  set +e
+  CHANGES=$(git status --porcelain|grep -v ^\?)
+  set -e
+  if [ -n "$CHANGES" ]; then
+    echo "There are local changes; please commit them before continuing"
+    exit 1
+  fi
+  echo "Fetching remote data from svn"
+  if [ "$BRANCH" != "$MIRROR_BRANCH" ]; then
+    git checkout "$MIRROR_BRANCH"
+  fi
+  # if any of the following fails, go back to $BRANCH
+  trap "git checkout '$BRANCH'" INT TERM
+  set +e
+  svn up --accept tf --ignore-externals && svn revert -R ./ && git add . && git commit -am "svn update to version $(svnversion) @ $(date)"
+  set -e
+  trap - INT TERM
+  git checkout "$BRANCH"
+  echo "fetch complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "rebase" ]; then
+  git rebase "$MIRROR_BRANCH"
+  echo "rebase complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "pull" ]; then
+  git lt fetch
+  git lt rebase
+  exit 0
+fi
+
+if [ "$ACTION" == "trash" ]; then
+  if [ "$BRANCH" != "$MIRROR_BRANCH" ]; then
+    git checkout "$MIRROR_BRANCH"
+  fi
+  # if any of the following fails, go back to $BRANCH
+  trap "git checkout '$BRANCH'" INT TERM
+  set +e
+	git branch -D "$BRANCH"
+  set -e
+  trap - INT TERM
+  git checkout -b "$BRANCH"
+  echo "trash complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "reset-all" ]; then
+	git lt trash
+	git lt pull
+  echo "trash and reset complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "add" ]; then
+  git add "$ARGUMENTS" && svn add "$ARGUMENTS"
+  echo "add complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "push" ]; then
+  # exit if there are any uncommitted changes here
+  set +e
+  CHANGES=$(git status --porcelain|grep -v ^?)
+  set -e
+  if [ -n "$CHANGES" ]; then
+    echo "There are local changes; please commit them before continuing"
+    exit 1
+  fi
+  LASTMESSAGE=$(git log --format=%B -n 1)
+  echo "$LASTMESSAGE"
+  echo ""
+  read -r -p "Are you sure you want to commit the current local state with the message above? [y/N] " RESPONSE
+  if [[ ! $RESPONSE =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    echo "push cancelled."
+    exit 0
+  fi
+  svn commit -m "$LASTMESSAGE" ## FIXME: untested!!
+  echo "push complete!"
+  exit 0
+fi
+
+if [ "$ACTION" == "commit" ]; then
+	# NOTE: we add an empty commit here as a hack to hopefully prevent rebase
+	# errors if no further changes are made.
+  svn commit && git commit --allow-empty -m "svn commit made @ $(date)"
+  exit 0
+fi
+
+echo "$USAGE"
+exit 1
