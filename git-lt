@@ -27,13 +27,13 @@
 # The branch to use as a mirror of svn
 MIRROR_BRANCH='MIRRORBRANCH'
 
-# Die on errors
-set -e
-
-
 ACTION="$1"
 shift
 ARGUMENTS="$@"
+
+# Die on errors
+set -e
+
 # Die on uninitialized vars
 set -u
 
@@ -72,7 +72,7 @@ if [ -z "$ACTION" ]; then
 fi
 
 if [ "$ACTION" == "help" ]; then
-	echo "$HELP"
+	echo "$USAGE"
 	exit 0
 fi
 
