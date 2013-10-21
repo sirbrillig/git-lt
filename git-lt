@@ -40,20 +40,20 @@ set -u
 green='\e[32m'
 yellow='\e[33m'
 red='\e[31m'
-endColor='\e[0m'
-noticeMessage () {
-  printf "${yellow}$@${endColor}\n"
+end_color='\e[0m'
+notice_message() {
+  printf "${yellow}$@${end_color}\n"
 }
 
-successMessage() {
-  printf "${green}$@${endColor}\n"
+success_message() {
+  printf "${green}$@${end_color}\n"
 }
 
-errorMessage() {
-  printf "${red}$@${endColor}\n"
+error_message() {
+  printf "${red}$@${end_color}\n"
 }
 
-VERSION='0.6.1'
+VERSION='0.6.2'
 
 USAGE="git-lt $VERSION
 A git plugin to allow using local branches for a remote svn repo.
@@ -62,10 +62,11 @@ usage:
 git lt help  How do I use this thing?
 git lt init  Initializes a git repository with a gitignore and creates a
              special mirror branch
-git lt pull  Alias for git lt fetch && git lt rebase
+git lt pull  Fetch the latest svn commit and rebase the current branch.
 git lt push  Make an svn commit for the most recent git commit.
 git lt add   Add a file to the git and svn repos.
 git lt diff  Alias for svn diff, piped through a highlighter
+git lt blame Alias for svn blame.
 git lt commit  Perform an svn commit and run git lt pull
 git lt status  Alias for svn status --ignore-externals
 
@@ -94,7 +95,7 @@ if [ "$ACTION" == "help" ]; then
 	exit 0
 fi
 
-pipe_if_not_empty () {
+pipe_if_not_empty() {
 	head=$(dd bs=1 count=1 2>/dev/null; echo a)
 	head=${head%a}
 	if [ "x$head" != x"" ]; then
@@ -105,7 +106,7 @@ pipe_if_not_empty () {
 set +e
 svn info > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-  errorMessage "I don't see a svn repository in this directory. I can't be of much help without that."
+  error_message "I don't see a svn repository in this directory. I can't be of much help without that."
   exit 1
 fi
 set -e
@@ -128,61 +129,66 @@ if [ "$ACTION" == "diff" ]; then
   exit 0
 fi
 
+if [ "$ACTION" == "blame" ]; then
+	svn blame "$ARGUMENTS"
+  exit 0
+fi
+
 if [ "$ACTION" == "init" ]; then
   FIRST_COMMIT=''
   if [ -d '.git' ]; then
-    noticeMessage "Looks like a git repository already exists here; skipping..."
+    notice_message "Looks like a git repository already exists here; skipping..."
   else
-    noticeMessage "Initializing git repository"
+    notice_message "Initializing git repository"
     git init
 		FIRST_COMMIT=1
   fi
   if [ -e '.gitignore' ]; then
-    noticeMessage "Looks like a gitignore already exists here; skipping..."
-    errorMessage "Be SURE that the gitignore contains the following:\n$GITIGNORE"
+    notice_message "Looks like a gitignore already exists here; skipping..."
+    error_message "Be SURE that the gitignore contains the following:\n$GITIGNORE"
     # TODO: allow appending to current gitignore?
   else
-    noticeMessage "Creating gitignore"
+    notice_message "Creating gitignore"
     echo "$GITIGNORE" > .gitignore
 		git add .gitignore
 		FIRST_COMMIT=1
   fi
 	if [ -n "$FIRST_COMMIT" ]; then
-		noticeMessage "Making initial commit"
+		notice_message "Making initial commit"
 		git add .
 		git commit -am 'initial commit by git-lt'
 	fi
-	noticeMessage "Checking for branch"
+	notice_message "Checking for branch"
 	set +e
   EXISTS=$(git show-ref refs/heads/$MIRROR_BRANCH)
 	set -e
   if [ -n "$EXISTS" ]; then
-    noticeMessage "Looks like the $MIRROR_BRANCH branch already exists here; skipping..."
+    notice_message "Looks like the $MIRROR_BRANCH branch already exists here; skipping..."
   else
-    noticeMessage "Creating mirror branch '$MIRROR_BRANCH'"
+    notice_message "Creating mirror branch '$MIRROR_BRANCH'"
     git branch "$MIRROR_BRANCH"
   fi
-  successMessage "All set!"
+  success_message "All set!"
   exit 0
 fi
 
 BRANCH=$(git branch | sed -n '/\* /s///p')
 if [ -z "$BRANCH" ]; then
-  errorMessage "Could not find local branch name."
+  error_message "Could not find local branch name."
   exit 1
 fi
 
 if [ "$ACTION" == "fetch" ]; then
-  noticeMessage "On branch $BRANCH"
+  notice_message "On branch $BRANCH"
   # exit if there are any uncommitted changes here
   set +e
   CHANGES=$(git status --porcelain|grep -v ^\?)
   set -e
   if [ -n "$CHANGES" ]; then
-    errorMessage "There are local changes; please commit them before continuing"
+    error_message "There are local changes; please commit them before continuing"
     exit 1
   fi
-  noticeMessage "Fetching remote data from svn"
+  notice_message "Fetching remote data from svn"
   if [ "$BRANCH" != "$MIRROR_BRANCH" ]; then
     git checkout "$MIRROR_BRANCH"
   fi
@@ -193,13 +199,13 @@ if [ "$ACTION" == "fetch" ]; then
   set -e
   trap - INT TERM
   git checkout "$BRANCH"
-  successMessage "fetch complete!"
+  success_message "fetch complete!"
   exit 0
 fi
 
 if [ "$ACTION" == "rebase" ]; then
   git rebase "$MIRROR_BRANCH"
-  successMessage "rebase complete!"
+  success_message "rebase complete!"
   exit 0
 fi
 
@@ -220,22 +226,33 @@ if [ "$ACTION" == "trash" ]; then
   set -e
   trap - INT TERM
   git checkout -b "$BRANCH"
-  successMessage "trash complete!"
+  success_message "trash complete!"
   exit 0
 fi
 
 if [ "$ACTION" == "reset-all" ]; then
 	git lt trash
 	git lt pull
-  successMessage "trash and reset complete!"
+  success_message "trash and reset complete!"
   exit 0
 fi
 
 if [ "$ACTION" == "add" ]; then
   git add "$ARGUMENTS" && svn add "$ARGUMENTS"
-  successMessage "add complete!"
+  success_message "add complete!"
   exit 0
 fi
+
+finish_commit() {
+  if [ "$BRANCH" == "$MIRROR_BRANCH" ] || [ "$BRANCH" == "master" ]; then
+		return
+  fi
+	read -r -p "Do you want to delete this branch ($BRANCH) and update the master branch to the latest commit? [y/N] " RESPONSE
+  if [[ ! $RESPONSE =~ ^([yY][eE][sS]|[yY])$ ]]; then
+		return
+  fi
+	git checkout 'master' && git lt pull && git branch -D "$BRANCH"
+}
 
 if [ "$ACTION" == "push" ]; then
   # exit if there are any uncommitted changes here
@@ -243,7 +260,7 @@ if [ "$ACTION" == "push" ]; then
   CHANGES=$(git status --porcelain|grep -v ^?)
   set -e
   if [ -n "$CHANGES" ]; then
-    errorMessage "There are local changes; please commit them before continuing"
+    error_message "There are local changes; please commit them before continuing"
     exit 1
   fi
   LASTMESSAGE=$(git log --format=%B -n 1)
@@ -251,18 +268,19 @@ if [ "$ACTION" == "push" ]; then
   echo ""
   read -r -p "Are you sure you want to commit the current local state with the message above? [y/N] " RESPONSE
   if [[ ! $RESPONSE =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    errorMessage "push cancelled."
+    error_message "push cancelled."
     exit 0
   fi
-  svn commit -m "$LASTMESSAGE" && git commit --allow-empty -m "svn push commit made @ $(date)"
-  successMessage "push complete!"
+  svn commit -m "$LASTMESSAGE"
+  success_message "push complete!"
+	finish_commit
   exit 0
 fi
 
 if [ "$ACTION" == "commit" ]; then
-	# NOTE: we add an empty commit here as a hack to hopefully prevent rebase
-	# errors if no further changes are made.
-  svn commit && git commit --allow-empty -m "svn commit made @ $(date)"
+  svn commit
+  success_message "commit complete!"
+	finish_commit
   exit 0
 fi
 
