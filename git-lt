@@ -53,7 +53,7 @@ error_message() {
   printf "${red}$@${end_color}\n"
 }
 
-VERSION='0.6.2'
+VERSION='0.6.3'
 
 USAGE="git-lt $VERSION
 A git plugin to allow using local branches for a remote svn repo.
@@ -111,6 +111,12 @@ if [ $? -ne 0 ]; then
 fi
 set -e
 
+BRANCH=$(git branch | sed -n '/\* /s///p')
+if [ -z "$BRANCH" ]; then
+  error_message "Could not find local branch name."
+  exit 1
+fi
+
 # Append any external repos to the gitignore.
 EXTERNALS=$(svn st --ignore-externals|grep ^X|awk '/X/{print $2}')
 GITIGNORE="$GITIGNORE$EXTERNALS"
@@ -121,10 +127,24 @@ if [ "$ACTION" == "st" ] || [ "$ACTION" == "status" ]; then
 fi
 
 if [ "$ACTION" == "diff" ]; then
+	# If there's been a recent pull in another branch, notify me that this branch
+	# is out-of-date.
+	notice_message "Checking the branch for updates..."
+  if [ "$BRANCH" != "$MIRROR_BRANCH" ]; then
+    git checkout "$MIRROR_BRANCH"
+  fi
+	LAST_PULLED_REV=$(svn info | grep ^Revision: | awk '{print $2}')
+  git checkout "$BRANCH"
+	OUR_PULLED_REV=$(git log --pretty=%B | grep 'svn update to version' | head -1 | awk '{print $5}')
+	if [ "$LAST_PULLED_REV" -ne "$OUR_PULLED_REV" ]; then
+		error_message "This branch is out-of-date (rev $OUR_PULLED_REV; mirror branch is at $LAST_PULLED_REV). You should do a git lt rebase."
+		exit 1
+	fi
+
 	if [ -t 1 ]; then
-		svn diff | colordiff | pipe_if_not_empty less -R
+		svn diff "$ARGUMENTS" | colordiff | pipe_if_not_empty less -R
 	else
-		svn diff
+		svn diff "$ARGUMENTS"
 	fi
   exit 0
 fi
@@ -170,12 +190,6 @@ if [ "$ACTION" == "init" ]; then
   fi
   success_message "All set!"
   exit 0
-fi
-
-BRANCH=$(git branch | sed -n '/\* /s///p')
-if [ -z "$BRANCH" ]; then
-  error_message "Could not find local branch name."
-  exit 1
 fi
 
 if [ "$ACTION" == "fetch" ]; then
