@@ -42,15 +42,15 @@ yellow='\e[33m'
 red='\e[31m'
 end_color='\e[0m'
 notice_message() {
-  printf "${yellow}$@${end_color}\n"
+  printf "${yellow}$@${end_color}\n" 1>&2
 }
 
 success_message() {
-  printf "${green}$@${end_color}\n"
+  printf "${green}$@${end_color}\n" 1>&2
 }
 
 error_message() {
-  printf "${red}$@${end_color}\n"
+  printf "${red}$@${end_color}\n" 1>&2
 }
 
 VERSION='0.6.3'
