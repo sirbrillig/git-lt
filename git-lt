@@ -27,6 +27,15 @@
 # The branch to use as a mirror of svn
 MIRROR_BRANCH='MIRRORBRANCH'
 
+# The URL of git-lt to download during selfupdate
+GIT_LT="https://raw.github.com/sirbrillig/git-lt/master/git-lt"
+
+# The temp directory to download git-lt during selfupdate
+TMP="/tmp"
+
+# The directory in which git-lt runs
+BIN="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 ACTION="$1"
 shift
 ARGUMENTS="$@"
@@ -53,7 +62,7 @@ error_message() {
   printf "${red}$@${end_color}\n" 1>&2
 }
 
-VERSION='0.6.3'
+VERSION='0.6.4'
 
 USAGE="git-lt $VERSION
 A git plugin to allow using local branches for a remote svn repo.
@@ -70,11 +79,12 @@ git lt blame Alias for svn blame.
 git lt commit  Perform an svn commit and run git lt pull
 git lt status  Alias for svn status --ignore-externals
 
-commands you probably won't need:
+commands you probably won't use much:
 git lt rebase  Rebases current branch to mirror branch
 git lt fetch   Updates mirror branch to latest svn commit
 git lt trash   Trash local branch
 git lt reset-all	Trash local branch and run git lt pull
+git lt selfupdate Try to update git-lt to the latest version.
 "
 
 GITIGNORE='.svn
@@ -103,6 +113,37 @@ pipe_if_not_empty() {
 	fi
 }
 
+vercomp () {
+    if [[ $1 == $2 ]]
+    then
+        return 0
+    fi
+    local IFS=.
+    local i ver1=($1) ver2=($2)
+    # fill empty fields in ver1 with zeros
+    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++))
+    do
+        ver1[i]=0
+    done
+    for ((i=0; i<${#ver1[@]}; i++))
+    do
+        if [[ -z ${ver2[i]} ]]
+        then
+            # fill empty fields in ver2 with zeros
+            ver2[i]=0
+        fi
+        if ((10#${ver1[i]} > 10#${ver2[i]}))
+        then
+            return 1
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]}))
+        then
+            return 2
+        fi
+    done
+    return 0
+}
+
 set +e
 svn info > /dev/null 2>&1
 if [ $? -ne 0 ]; then
@@ -115,6 +156,38 @@ BRANCH=$(git branch | sed -n '/\* /s///p')
 if [ -z "$BRANCH" ]; then
   error_message "Could not find local branch name."
   exit 1
+fi
+
+if [ "$ACTION" == "selfupdate" ]; then
+  notice_message "$GIT_LT"
+  echo ""
+  read -r -p "Are you sure you want to download the file at the above URL and save it to '$BIN'? [y/N] " RESPONSE
+  if [[ ! $RESPONSE =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    error_message "selfupdate cancelled."
+    exit 0
+  fi
+  curl -o "$TMP/git-lt" "$GIT_LT"
+  if [ ! -e "$TMP/git-lt" ]; then
+    error_message "download failed."
+    exit 0
+  fi
+  # TODO: validate the file
+  NEW_VERSION=$(grep "^VERSION" "$TMP/git-lt"|awk -F= '{print $2}'|tr -d "'")
+  notice_message "downloaded version $NEW_VERSION"
+  set +e
+  vercomp "$NEW_VERSION" "$VERSION"
+  VER_DIFF="$?"
+  if [ -z "$NEW_VERSION" ] || [ "$VER_DIFF" != 1  ]; then
+    error_message "Downloaded file is not a newer version of git-lt."
+    exit 0
+  fi
+  notice_message "Setting permissions..."
+  chmod 744 "$TMP/git-lt"
+  notice_message "Copying new version into place..."
+  cp "$TMP/git-lt" "$BIN/git-lt"
+  set -e
+  success_message "Update complete!"
+  exit 0
 fi
 
 # Append any external repos to the gitignore.
