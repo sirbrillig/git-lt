@@ -215,9 +215,9 @@ if [ "$ACTION" == "diff" ]; then
 	fi
 
 	if [ -t 1 ]; then
-		svn diff "$ARGUMENTS" | colordiff | pipe_if_not_empty less -R
+		svn diff $ARGUMENTS | colordiff | pipe_if_not_empty less -R
 	else
-		svn diff "$ARGUMENTS"
+		svn diff $ARGUMENTS
 	fi
   exit 0
 fi
