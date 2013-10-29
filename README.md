@@ -1,7 +1,13 @@
 git-lt
 ======
 
-A git plugin to allow using local branches for a remote svn repo. It's like
+*NOTE*: this script is entirely bash but has grown a little beyond what is
+comfortable for a shell script. The evolution of this into a ruby thor program
+is [git-si](https://github.com/sirbrillig/git-si).
+
+---
+
+A git extension to allow using local branches for a remote svn repo. It's like
 git-svn, but without keeping track of history locally.
 
     usage:
